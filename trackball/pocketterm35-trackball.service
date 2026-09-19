@@ -1,0 +1,20 @@
+[Unit]
+Description=PocketTerm35 Pimoroni trackball mouse
+After=systemd-modules-load.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/pocketterm35-addons/trackball/trackball_mouse.py
+Restart=on-failure
+RestartSec=5
+User=root
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target
