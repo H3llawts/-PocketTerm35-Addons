@@ -2,6 +2,11 @@
 # Self-contained installer for Raspberry Pi OS Bookworm/Trixie.
 set -Eeuo pipefail
 trap 'echo "Install stopped at line $LINENO. Fix the reported error and rerun; do not assume installation succeeded." >&2' ERR
+if [[ "${1:-}" == "--help" ]]; then
+  echo "Usage: sudo bash $0 [--rotation 0|90|180|270] [--speed 0.1..20] [--red 0..255] [--green 0..255] [--blue 0..255] [--white 0..255]"
+  echo "Omitted options preserve existing settings, or use defaults on first install."
+  exit 0
+fi
 if (( EUID != 0 )); then
   echo "Run: sudo bash $0" >&2
   exit 1
@@ -19,12 +24,10 @@ flock -n 9 || { echo "Another installation is running." >&2; exit 1; }
 boot=/boot/firmware/config.txt
 [[ -f "$boot" ]] || boot=/boot/config.txt
 [[ -f "$boot" ]] || { echo "Cannot find boot config.txt." >&2; exit 1; }
-apt-get update
-apt-get install -y python3 python3-smbus2 python3-evdev
-install -d -m 755 /opt/pocketterm35-addons/trackball
-# Stop our service before updating or probing; never run two readers at once.
-systemctl stop pocketterm35-trackball.service 2>/dev/null || true
-cat > /opt/pocketterm35-addons/trackball/trackball_mouse.py <<'POCKETTERM_EOF'
+command -v python3 >/dev/null || { echo "Install python3 first." >&2; exit 1; }
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
+cat > "$stage/trackball_mouse.py" <<'POCKETTERM_EOF'
 #!/usr/bin/python3
 """Pimoroni trackball -> Linux uinput, independent of the desktop session."""
 import configparser
@@ -146,9 +149,46 @@ if __name__ == '__main__':
         logging.error('%s', exc)
         sys.exit(1)
 POCKETTERM_EOF
-chmod 644 /opt/pocketterm35-addons/trackball/trackball_mouse.py
-if [[ ! -e /etc/pocketterm35-trackball.ini ]]; then
-cat > /etc/pocketterm35-trackball.ini <<'POCKETTERM_EOF'
+cat > "$stage/configure.py" <<'POCKETTERM_EOF'
+#!/usr/bin/env python3
+"""Prepare and validate configuration without modifying the installed file."""
+import argparse
+import configparser
+from pathlib import Path
+from trackball_mouse import settings
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--existing', required=True)
+    p.add_argument('--defaults', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--rotation', type=int, choices=(0, 90, 180, 270))
+    p.add_argument('--speed', type=float)
+    for color in ('red', 'green', 'blue', 'white'):
+        p.add_argument('--' + color, type=int)
+    a = p.parse_args()
+    cfg = configparser.ConfigParser()
+    cfg.read(a.defaults)
+    cfg.read(a.existing)
+    for key in ('rotation', 'speed', 'red', 'green', 'blue', 'white'):
+        value = getattr(a, key)
+        if value is not None:
+            cfg['trackball'][key] = str(value)
+    with open(a.output, 'w') as f:
+        cfg.write(f)
+    try:
+        result = settings(a.output)
+    except Exception:
+        Path(a.output).unlink(missing_ok=True)
+        raise
+    print('Configuration:', result)
+
+
+if __name__ == '__main__':
+    main()
+POCKETTERM_EOF
+cat > "$stage/trackball.ini" <<'POCKETTERM_EOF'
 [trackball]
 bus = 1
 address = 0x0a
@@ -163,9 +203,7 @@ green = 12
 blue = 0
 white = 0
 POCKETTERM_EOF
-chmod 644 /etc/pocketterm35-trackball.ini
-fi
-cat > /etc/systemd/system/pocketterm35-trackball.service <<'POCKETTERM_EOF'
+cat > "$stage/pocketterm35-trackball.service" <<'POCKETTERM_EOF'
 [Unit]
 Description=PocketTerm35 Pimoroni trackball mouse
 After=systemd-modules-load.service
@@ -187,7 +225,18 @@ TimeoutStopSec=5
 [Install]
 WantedBy=multi-user.target
 POCKETTERM_EOF
-chmod 644 /etc/systemd/system/pocketterm35-trackball.service
+# Validate all options before apt, service changes or configuration writes.
+/usr/bin/python3 "$stage/configure.py" --existing /etc/pocketterm35-trackball.ini --defaults "$stage/trackball.ini" --output "$stage/config.ini" "$@"
+apt-get update
+apt-get install -y python3 python3-smbus2 python3-evdev
+install -d -m 755 /opt/pocketterm35-addons/trackball
+systemctl stop pocketterm35-trackball.service 2>/dev/null || true
+if [[ -f /etc/pocketterm35-trackball.ini ]]; then
+  cp -p /etc/pocketterm35-trackball.ini "/etc/pocketterm35-trackball.ini.backup.$(date +%Y%m%d-%H%M%S)"
+fi
+install -m 644 "$stage/trackball_mouse.py" /opt/pocketterm35-addons/trackball/trackball_mouse.py
+install -m 644 "$stage/config.ini" /etc/pocketterm35-trackball.ini
+install -m 644 "$stage/pocketterm35-trackball.service" /etc/systemd/system/pocketterm35-trackball.service
 # Validate preserved user settings before enabling the service.
 /usr/bin/python3 - <<'CONFIG_CHECK'
 import sys

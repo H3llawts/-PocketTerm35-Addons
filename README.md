@@ -24,6 +24,20 @@ Download `install-trackball.sh` to the Pi, open a terminal in its folder, and ru
 sudo bash install-trackball.sh
 ```
 
+### Set rotation, speed and brightness during installation
+
+For Rob's rear mounting, slower motion and brighter green illumination:
+
+```bash
+sudo bash install-trackball.sh --rotation 90 --speed 1.0 --green 128
+```
+
+Supported options: `--rotation 0|90|180|270`, `--speed 0.1..20`, and `--red`, `--green`, `--blue`, `--white` (each 0..255). Green 128 is brighter than the default 12; 255 is maximum. Speed 1.0 halves the driver's movement scaling compared with the default 2.0; desktop acceleration can also affect perceived speed.
+
+Omitted settings retain the installed values, or use defaults on first installation. Explicit options override only those settings. Values are validated before package installation or service changes; existing configuration is backed up before replacement. Run `bash install-trackball.sh --help` for usage.
+
+For an already working installation, edit `/etc/pocketterm35-trackball.ini` and restart `pocketterm35-trackball` to apply tuning without reinstalling.
+
 This is self-contained: the other repository files are not needed to install. An internet connection is needed for Debian packages. No pip, virtual environment, desktop autostart entry or login is needed.
 
 The installer installs OS-packaged `python3-smbus2` and `python3-evdev`, backs up boot config before appending an I2C-enable block, preserves existing overlays, enables i2c-dev/uinput at boot, validates the chip identity, and enables a systemd service. Re-running preserves your tuning config. It never reboots automatically.
